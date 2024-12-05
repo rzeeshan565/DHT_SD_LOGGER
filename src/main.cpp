@@ -8,11 +8,18 @@
 #include <Arduino.h>
 #include "DHT.h"
 #include <WiFi.h>
-#include <WiFiClient.h>
-#include <WebServer.h>
-#include <ESPmDNS.h>
-#include <Update.h>
-#include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
+#include <AsyncTCP.h>
+//#include <WiFiClient.h>
+#include <ESPAsyncWebServer.h>
+//#include <WebServer.h>
+//#include <ESPmDNS.h>
+//#include <Update.h>
+#include "LittleFS.h"
+#include <Arduino_JSON.h>
+//#include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
+
+const char* ssid_ = "Vodafone-70DC";
+const char* pass_ = "2PyHmTptCxzePxxe";
 
 #define DHTPIN 4     // Digital pin connected to the DHT sensor
 // Feather HUZZAH ESP8266 note: use pins 3, 4, 5, 12, 13 or 14 --
@@ -36,9 +43,21 @@
 // as the current DHT reading algorithm adjusts itself to work on faster procs.
 DHT dht(DHTPIN, DHTTYPE);
 
-WiFiManager wm;
+//WiFiManager wm;
 
-WebServer server(80);
+//WebServer server(80);
+
+// Create AsyncWebServer object on port 80
+AsyncWebServer server(80);
+
+// Create an Event Source on /events
+AsyncEventSource events("/events");
+
+// Timer variables
+unsigned long lastTime = 0;
+unsigned long timerDelay = 10000;
+// Json Variable to Hold Sensor Readings
+JSONVar readings;
 
 const char* host = "esp32";
 
@@ -128,6 +147,15 @@ const char* serverIndex =
  "});"
  "</script>";
 
+String getSensorReadings(void);
+
+// Initialize LittleFS
+void initLittleFS() {
+  if (!LittleFS.begin()) {
+    Serial.println("An error has occurred while mounting LittleFS");
+  }
+  Serial.println("LittleFS mounted successfully");
+}
 
 static void setup_wifi(String _ssid, String _pass)
 {
@@ -156,14 +184,30 @@ static void setup_wifi(String _ssid, String _pass)
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 
-  /*use mdns for host name resolution*/
-  if (!MDNS.begin(host)) { //http://esp32.local
-    Serial.println("Error setting up MDNS responder!");
-    while (1) {
-      delay(1000);
+  // Web Server Root URL
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(LittleFS, "/index.html", "text/html");
+  });
+
+  server.serveStatic("/", LittleFS, "/");
+
+  // Request for the latest sensor readings
+  server.on("/readings", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = getSensorReadings();
+    request->send(200, "application/json", json);
+    json = String();
+  });
+
+  events.onConnect([](AsyncEventSourceClient *client){
+    if(client->lastId()){
+      Serial.printf("Client reconnected! Last message ID that it got is: %u\n", client->lastId());
     }
-  }
-  Serial.println("mDNS responder started");
+    // send event with message "hello!", id current millis
+    // and set reconnect delay to 1 second
+    client->send("hello!", NULL, millis(), 10000);
+  });
+  server.addHandler(&events);
+#if 0
   /*return index page which is stored in serverIndex */
   server.on("/", HTTP_GET, []() {
     server.sendHeader("Connection", "close");
@@ -173,6 +217,7 @@ static void setup_wifi(String _ssid, String _pass)
     server.sendHeader("Connection", "close");
     server.send(200, "text/html", serverIndex);
   });
+
   /*handling uploading firmware file */
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
@@ -198,47 +243,13 @@ static void setup_wifi(String _ssid, String _pass)
       }
     }
   });
+#endif
   server.begin();
 }
 
-void setup() {
-  //WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP 
-  Serial.begin(115200);
-  // wifi scan settings
-  // wm.setRemoveDuplicateAPs(false); // do not remove duplicate ap names (true)
-  // wm.setMinimumSignalQuality(20);  // set min RSSI (percentage) to show in scans, null = 8%
-  // wm.setShowInfoErase(false);      // do not show erase button on info page
-  // wm.setScanDispPerc(true);       // show RSSI as percentage not graph icons
-  //WiFiManager wm;
-  // wm.setBreakAfterConfig(true);   // always exit configportal even if wifi save fails
-
-  bool res;
-  // res = wm.autoConnect(); // auto generated AP name from chipid
-  // res = wm.autoConnect("AutoConnectAP"); // anonymous ap
-  res = wm.autoConnect("AutoConnectAP","password"); // password protected ap
-
-  if(!res) {
-    Serial.println("Failed to connect or hit timeout");
-    // ESP.restart();
-  } 
-  else {
-    //if you get here you have connected to the WiFi    
-    Serial.println("connected...yeey :)");
-
-    setup_wifi(wm.getWiFiSSID(), wm.getWiFiPass());
-  }
-
-  Serial.println(F("DHT22 test!"));
-
-  dht.begin();
-}
-
-void loop() {
-  // Wait a few seconds between measurements.
-  server.handleClient();
-  delay(1);
-  
-  delay(2000);
+// Get Sensor Readings and return JSON object
+String getSensorReadings(){
+  String jsonString;
 
   // Reading temperature or humidity takes about 250 milliseconds!
   // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
@@ -251,24 +262,54 @@ void loop() {
   // Check if any reads failed and exit early (to try again).
   if (isnan(h) || isnan(t) || isnan(f)) {
     Serial.println(F("Failed to read from DHT sensor!"));
-    return;
+    return jsonString;
+  }
+  readings["temperature"] = String(t);
+  readings["humidity"] =  String(h);
+  jsonString = JSON.stringify(readings);
+  return jsonString;
+}
+
+void setup() {
+  //WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP 
+  Serial.begin(115200);
+  initLittleFS();
+  // wifi scan settings
+  // wm.setRemoveDuplicateAPs(false); // do not remove duplicate ap names (true)
+  // wm.setMinimumSignalQuality(20);  // set min RSSI (percentage) to show in scans, null = 8%
+  // wm.setShowInfoErase(false);      // do not show erase button on info page
+  // wm.setScanDispPerc(true);       // show RSSI as percentage not graph icons
+  //WiFiManager wm;
+  // wm.setBreakAfterConfig(true);   // always exit configportal even if wifi save fails
+
+  bool res;
+  // res = wm.autoConnect(); // auto generated AP name from chipid
+  // res = wm.autoConnect("AutoConnectAP"); // anonymous ap
+  res = true;//wm.autoConnect("AutoConnectAP","password"); // password protected ap
+
+  if(!res) {
+    Serial.println("Failed to connect or hit timeout");
+    // ESP.restart();
+  } 
+  else {
+    //if you get here you have connected to the WiFi    
+    Serial.println("connected...yeey :)");
+
+    //setup_wifi(wm.getWiFiSSID(), wm.getWiFiPass());
+    setup_wifi(ssid_, pass_);
   }
 
-  // Compute heat index in Fahrenheit (the default)
-  float hif = dht.computeHeatIndex(f, h);
-  // Compute heat index in Celsius (isFahreheit = false)
-  float hic = dht.computeHeatIndex(t, h, false);
+  Serial.println(F("DHT22 test!"));
 
-  Serial.print(F("Humidity: "));
-  Serial.print(h);
-  Serial.print(F("%  Temperature: "));
-  Serial.print(t);
-  Serial.print(F("°C "));
-  Serial.print(f);
-  Serial.print(F("°F  Heat index: "));
-  Serial.print(hic);
-  Serial.print(F("°C "));
-  Serial.print(hif);
-  Serial.println(F("°F"));
+  dht.begin();
+}
+
+void loop() {
+  if ((millis() - lastTime) > timerDelay) {
+    // Send Events to the client with the Sensor Readings Every 10 seconds
+    events.send("ping",NULL,millis());
+    events.send(getSensorReadings().c_str(),"new_readings" ,millis());
+    lastTime = millis();
+  }
   
 }
