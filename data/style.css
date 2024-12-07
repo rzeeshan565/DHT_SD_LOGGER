@@ -36,3 +36,13 @@ body {
   font-weight: bold;
   color: #034078
 }
+/* Styling the date-time label */
+#dateTimeLabel {
+  font-size: 1.2em;
+  font-weight: bold;
+  color: #007BFF; /* Blue color for emphasis */
+  background: #e9f5ff; /* Light blue background */
+  padding: 5px 10px;
+  border-radius: 5px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}

@@ -126,6 +126,7 @@ function getReadings(){
   xhr.onreadystatechange = function() {
     if (this.readyState == 4 && this.status == 200) {
       var myObj = JSON.parse(this.responseText);
+      dateTimeLabel.textContent = `${myObj.date} ${myObj.time}`;
       console.log(myObj);
       var temp = myObj.temperature;
       var hum = myObj.humidity;
@@ -160,5 +161,6 @@ if (!!window.EventSource) {
     console.log(myObj);
     gaugeTemp.value = myObj.temperature;
     gaugeHum.value = myObj.humidity;
+    dateTimeLabel.textContent = `${myObj.date} ${myObj.time}`; // Formats the date and time for the user's locale
   }, false);
 }
