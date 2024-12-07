@@ -55,7 +55,7 @@ AsyncEventSource events("/events");
 
 // Timer variables
 unsigned long lastTime = 0;
-unsigned long timerDelay = 10000;
+unsigned long timerDelay = 1000;
 // Json Variable to Hold Sensor Readings
 JSONVar readings;
 
@@ -204,7 +204,7 @@ static void setup_wifi(String _ssid, String _pass)
     }
     // send event with message "hello!", id current millis
     // and set reconnect delay to 1 second
-    client->send("hello!", NULL, millis(), 10000);
+    client->send("hello!", NULL, millis(), 1000);
   });
   server.addHandler(&events);
 #if 0
