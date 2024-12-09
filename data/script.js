@@ -51,7 +51,7 @@ var gaugeTemp = new LinearGauge({
       "120",
       "125"
   ],
-  minorTicks: 4,
+  minorTicks: 5,
   strokeTicks: true,
   highlights: [
       {
@@ -127,6 +127,8 @@ function getReadings(){
     if (this.readyState == 4 && this.status == 200) {
       var myObj = JSON.parse(this.responseText);
       dateTimeLabel.textContent = `${myObj.date} ${myObj.time}`;
+      const ledDiv = document.getElementById('led');
+      ledDiv.className = 'led ' + data.state;
       console.log(myObj);
       var temp = myObj.temperature;
       var hum = myObj.humidity;
@@ -162,5 +164,7 @@ if (!!window.EventSource) {
     gaugeTemp.value = myObj.temperature;
     gaugeHum.value = myObj.humidity;
     dateTimeLabel.textContent = `${myObj.date} ${myObj.time}`; // Formats the date and time for the user's locale
+    const ledDiv = document.getElementById('led');
+    ledDiv.className = 'led ' + myObj.state;
   }, false);
 }

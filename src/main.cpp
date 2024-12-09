@@ -36,12 +36,22 @@ const char* pass_ = "2PyHmTptCxzePxxe";
 #include "SPI.h"
 #endif
 
-#define DAYLIGH_SAVING_H    1
+#define DAYLIGH_SAVING_H    0
 
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 0;
 struct tm timeinfo, tm_loc;
 static String hour, minute, sec, day, mon;
+
+// LED state variable
+//String ledState = "red"; // Can be "red", "green", or "yellow"
+enum State {
+  NONE_S,
+  ERROR_S,
+  OK_S
+};
+
+enum State ledState;
 #define DHTPIN 4     // Digital pin connected to the DHT sensor
 // Feather HUZZAH ESP8266 note: use pins 3, 4, 5, 12, 13 or 14 --
 // Pin 15 can work but DHT must be disconnected during program upload.
@@ -89,7 +99,8 @@ static bool rtc_is_running = false;;
 
 #ifdef SD_INCLUDE
 static const String sd_log_dir = "/DHT_LOGS";
-const char* log_hdr = "date, time, temperature(°C), humidity(%)\n";
+const char* log_hdr = "date, time, temperature(°C), humidity(%), state\n";
+static bool sd_mount_failed = false;
 #endif
 /*/Users/zeeshanrehman/.platformio/packages/framework-arduinoespressif32/libraries/WiFiManager-master/examples/Basic/Basic.ino
  * Login page
@@ -259,7 +270,7 @@ static void setup_wifi(String _ssid, String _pass)
   /*handling uploading firmware file */
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
-    server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+    server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK_S");
     ESP.restart();
   }, []() {
     HTTPUpload& upload = server.upload();
@@ -287,40 +298,39 @@ static void setup_wifi(String _ssid, String _pass)
 
 // Get Sensor Readings and return JSON object
 String getSensorReadings(){
-  String jsonString;
+  String jsonString, state;
+  char time_buf[3]; // 2 digits + null terminator
 
 #ifdef RTC_INCLUDE
   if(rtc_is_running) {
     DateTime now = rtc.now();
 
-    // handle single digit numbers
-    if (now.hour() < 10) hour = "0" + String(now.hour());
-    else hour = String(now.hour());
-    if (now.minute() < 10) minute = "0" + String(now.minute());
-    else minute = String(now.minute());
-    if (now.second() < 10) sec = "0" +String(now.second());
-    else sec = String(now.second());
-    if (now.month() < 10) mon = "0" + String(now.month());
-    else mon = String(now.month());
-    if (now.day() < 10) day = "0" +String(now.day());
-    else day = String(now.day());
+    sprintf(time_buf, "%02d", now.hour());
+    hour = String(time_buf);
+    sprintf(time_buf, "%02d", now.minute());
+    minute = String(time_buf);
+    sprintf(time_buf, "%02d", now.second());
+    sec = String(time_buf);
+    sprintf(time_buf, "%02d", now.month());
+    mon = String(time_buf);
+    sprintf(time_buf, "%02d", now.day());
+    day = String(time_buf);
 
     readings["time"] =  hour + ":" + minute + ":" + sec;
     readings["date"] = String(now.year()) + "-" + mon + "-" + day;
     memcpy(&tm_loc, gmtime(&now.unixtime()), sizeof (struct tm));
   }
 #else
-  // handle single digit numbers
-  if (timeinfo.tm_hour < 10) hour = "0" + String(timeinfo.tm_hour);
-  else hour = String(timeinfo.tm_hour);
-  if (timeinfo.tm_min < 10) minute = "0" + String(timeinfo.tm_min);
-  else minute = String(timeinfo.tm_min);
-  if (timeinfo.tm_sec < 10) sec = "0" +String(timeinfo.tm_sec);
-  else sec = String(timeinfo.tm_sec);
-  if (timeinfo.tm_mday < 10) day = "0" + String(timeinfo.tm_mday);
-  else day = String(timeinfo.tm_mday);
-  if (timeinfo.tm_sec < 10) mon = "0" +String(timeinfo.tm_mon);
-  else mon = String(timeinfo.tm_mon);
+  sprintf(time_buf, "%02d", timeinfo.tm_hour);
+  hour = String(time_buf);
+  sprintf(time_buf, "%02d", timeinfo.tm_min);
+  minute = String(time_buf);
+  sprintf(time_buf, "%02d", timeinfo.tm_sec);
+  sec = String(time_buf);
+  sprintf(time_buf, "%02d", timeinfo.tm_mon);
+  mon = String(time_buf);
+  sprintf(time_buf, "%02d", timeinfo.tm_mday);
+  day = String(time_buf);
 
   //use internet time
   readings["time"] =  hour + ":" + minute + ":" + sec;
@@ -338,20 +348,41 @@ String getSensorReadings(){
   // Check if any reads failed and exit early (to try again).
   if (isnan(h) || isnan(t) || isnan(f)) {
     Serial.println(F("Failed to read from DHT sensor!"));
+    ledState = ERROR_S;
     return jsonString;
+  } else {
+    ledState = OK_S;
   }
 
   readings["temperature"] = String(t);
   readings["humidity"] =  String(h);
 
+  // set LED state
+  switch (ledState) {
+    case ERROR_S:
+      state = "red";
+      break;
+    case OK_S:
+      state = "green";
+      break;
+    case NONE_S:
+      state = "yellow";
+      break;
+  }
+  readings["state"] = state;
+
   // write SD_data
 #ifdef SD_INCLUDE
-  if(sd_write_logs(readings)) {
+  if(!sd_mount_failed) {
+    if(sd_write_logs(readings)) {
+      ledState = OK_S;
 #ifdef SD_DEBUG_LOG
-    Serial.println("SD Logs write Success.");
+      Serial.println("SD Logs write Success.");
 #endif
-  } else {
-    Serial.println("SD Logs write Fail.");
+    } else {
+      ledState = ERROR_S;
+      Serial.println("SD Logs write Fail.");
+    }
   }
 #endif
 
@@ -553,6 +584,7 @@ static int createDir(fs::FS &fs, const char * path){
 static void init_sd(void) {
   if(!SD.begin(5)){
     Serial.println("Card Mount Failed");
+    sd_mount_failed = true;
     return;
   }
   uint8_t cardType = SD.cardType();
@@ -646,7 +678,8 @@ bool sd_write_logs(JSONVar data) {
   buf = JSON.stringify(data["date"]) + "," + 
         JSON.stringify(data["time"]) + "," + 
         JSON.stringify(data["temperature"]) + "," + 
-        JSON.stringify(data["humidity"]) + "\n";
+        JSON.stringify(data["humidity"]) + "," +
+        String(ledState) + "\n";
 
   logs_dir = sd_log_dir + "/" + String(tm_loc.tm_year) + "/" + mon;
   if (createDir(SD, logs_dir.c_str()) < 0) {
@@ -655,7 +688,7 @@ bool sd_write_logs(JSONVar data) {
     }
   }
   
-  file_name = logs_dir + "/LOGS_" + day+ ".csv";
+  file_name = logs_dir + "/LOGS_" + day+ ".CSV";
 
   if (sd_write(file_name.c_str(), buf.c_str()) < 0) {
     res = false; // fail to write
@@ -720,6 +753,9 @@ void setup() {
   Serial.println(F("DHT22 test!"));
 
   dht.begin();
+
+  // Simulate changing LED state
+  ledState = ERROR_S; // Initial state (error)
 }
 
 void loop() {
@@ -744,11 +780,27 @@ void loop() {
 #endif
   }
 
+#if 0
+  // Example: Simulate changing LED state
+  static unsigned long lastChange = 0;
+  if (millis() - lastChange > 5000) { // Change every 5 seconds
+      lastChange = millis();
+      if (ledState == ERROR_S) {
+          ledState = OK_S;
+      } else if (ledState == OK_S) {
+          ledState = NONE_S;
+      } else {
+          ledState = ERROR_S;
+      }
+  }
+#endif
+
   if ((millis() - lastTime) > timerDelay) {
     // Send Events to the client with the Sensor Readings Every 10 seconds
     events.send("ping",NULL,millis());
     events.send(getSensorReadings().c_str(),"new_readings" ,millis());
     lastTime = millis();
+    //Serial.printf("LED State: %d\n", ledState);
 
 #ifdef RTC_INCLUDE
   Serial.print("ESP32 RTC Date Time: ");
