@@ -20,7 +20,7 @@
 #include "time.h"
 //#include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
 
-//#define RTC_INCLUDE
+#define RTC_INCLUDE
 #define SD_INCLUDE
 //#define SD_DEBUG_LOG //only print fail message for now
 
@@ -41,7 +41,7 @@ const char* pass_ = "2PyHmTptCxzePxxe";
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 0;
 struct tm timeinfo, tm_loc;
-static String hour, minute, sec, day, mon;
+static String hour, minute, sec, day, mon, year;
 
 // LED state variable
 //String ledState = "red"; // Can be "red", "green", or "yellow"
@@ -299,7 +299,8 @@ static void setup_wifi(String _ssid, String _pass)
 // Get Sensor Readings and return JSON object
 String getSensorReadings(){
   String jsonString, state;
-  char time_buf[3]; // 2 digits + null terminator
+  bool dht_fail, sd_fail;
+  char time_buf[5]; // 4 digits + null terminator
 
 #ifdef RTC_INCLUDE
   if(rtc_is_running) {
@@ -315,10 +316,13 @@ String getSensorReadings(){
     mon = String(time_buf);
     sprintf(time_buf, "%02d", now.day());
     day = String(time_buf);
+    sprintf(time_buf, "%04d", now.year());
+    year = String(time_buf);
 
-    readings["time"] =  hour + ":" + minute + ":" + sec;
-    readings["date"] = String(now.year()) + "-" + mon + "-" + day;
-    memcpy(&tm_loc, gmtime(&now.unixtime()), sizeof (struct tm));
+    //memcpy(&tm_loc, gmtime(&now.unixtime()), sizeof (struct tm));
+    time_t t_unix = now.unixtime();
+    memcpy(&tm_loc, gmtime(&t_unix), sizeof(struct tm));
+
   }
 #else
   sprintf(time_buf, "%02d", timeinfo.tm_hour);
@@ -331,11 +335,14 @@ String getSensorReadings(){
   mon = String(time_buf);
   sprintf(time_buf, "%02d", timeinfo.tm_mday);
   day = String(time_buf);
+  sprintf(time_buf, "%04d", timeinfo.tm_year);
+  year = String(time_buf);
 
   //use internet time
-  readings["time"] =  hour + ":" + minute + ":" + sec;
-  readings["date"] = String(timeinfo.tm_year) + "-" + mon + "-" + day;
+  
 #endif
+  readings["time"] =  hour + ":" + minute + ":" + sec;
+  readings["date"] = year + "-" + mon + "-" + day;
 
   // Reading temperature or humidity takes about 250 milliseconds!
   // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
@@ -348,15 +355,31 @@ String getSensorReadings(){
   // Check if any reads failed and exit early (to try again).
   if (isnan(h) || isnan(t) || isnan(f)) {
     Serial.println(F("Failed to read from DHT sensor!"));
-    ledState = ERROR_S;
-    return jsonString;
+    dht_fail = true;
   } else {
-    ledState = OK_S;
+    dht_fail = false;
   }
 
   readings["temperature"] = String(t);
   readings["humidity"] =  String(h);
 
+  // write SD_data
+#ifdef SD_INCLUDE
+  if(!sd_mount_failed) {
+    if(sd_write_logs(readings)) {
+      sd_fail = false;
+#ifdef SD_DEBUG_LOG
+      Serial.println("SD Logs write Success.");
+#endif
+    } else {
+      sd_fail = true;
+    }
+  }
+#endif
+
+  if (dht_fail || sd_fail) ledState = ERROR_S;
+  else ledState = OK_S;
+  
   // set LED state
   switch (ledState) {
     case ERROR_S:
@@ -370,21 +393,6 @@ String getSensorReadings(){
       break;
   }
   readings["state"] = state;
-
-  // write SD_data
-#ifdef SD_INCLUDE
-  if(!sd_mount_failed) {
-    if(sd_write_logs(readings)) {
-      ledState = OK_S;
-#ifdef SD_DEBUG_LOG
-      Serial.println("SD Logs write Success.");
-#endif
-    } else {
-      ledState = ERROR_S;
-      Serial.println("SD Logs write Fail.");
-    }
-  }
-#endif
 
   jsonString = JSON.stringify(readings);
   return jsonString;
@@ -551,12 +559,12 @@ static int createDirHelper(void){
     res = -1;
   }
 
-  path += "/" + String(tm_loc.tm_year);
+  path += "/" + year;
   if(!fs.mkdir(path.c_str())){
     res = -1;
   }
 
-  path += "/" + String(tm_loc.tm_mon);
+  path += "/" + mon;
   if(!fs.mkdir(path.c_str())){
     res = -1;
   }
@@ -681,7 +689,7 @@ bool sd_write_logs(JSONVar data) {
         JSON.stringify(data["humidity"]) + "," +
         String(ledState) + "\n";
 
-  logs_dir = sd_log_dir + "/" + String(tm_loc.tm_year) + "/" + mon;
+  logs_dir = sd_log_dir + "/" + year + "/" + mon;
   if (createDir(SD, logs_dir.c_str()) < 0) {
     if(createDirHelper() < 0) {
       res = false; // fail to create dir
@@ -802,7 +810,7 @@ void loop() {
     lastTime = millis();
     //Serial.printf("LED State: %d\n", ledState);
 
-#ifdef RTC_INCLUDE
+#if 0
   Serial.print("ESP32 RTC Date Time: ");
   Serial.print(now.year(), DEC);
   Serial.print('/');

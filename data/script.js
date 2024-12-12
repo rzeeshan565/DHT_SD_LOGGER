@@ -128,7 +128,7 @@ function getReadings(){
       var myObj = JSON.parse(this.responseText);
       dateTimeLabel.textContent = `${myObj.date} ${myObj.time}`;
       const ledDiv = document.getElementById('led');
-      ledDiv.className = 'led ' + data.state;
+      ledDiv.className = 'led ' + myObj.state;
       console.log(myObj);
       var temp = myObj.temperature;
       var hum = myObj.humidity;
