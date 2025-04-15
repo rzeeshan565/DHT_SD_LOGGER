@@ -1,0 +1,1 @@
+THis project uses Embedded C to program an ESP32-Wroom device to interact with different sensors connected over GPIOs/SPI/I2C such as Temperature, Humidity and write/store data in SD card connected over SPI bus. Also the data is shown on locally hosted Webserver with auto-refresh and A-sync features.
