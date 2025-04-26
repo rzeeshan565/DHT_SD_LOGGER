@@ -24,8 +24,8 @@
 #define SD_INCLUDE
 //#define SD_DEBUG_LOG //only print fail message for now
 
-const char* ssid_ = "Vodafone-70DC";
-const char* pass_ = "2PyHmTptCxzePxxe";
+const char* ssid_ = "define ssd here";
+const char* pass_ = "define password here";
 
 #ifdef RTC_INCLUDE
 #include <RTClib.h>
